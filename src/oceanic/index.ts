@@ -2,6 +2,7 @@ import {
   ApiEndpoints,
   DiscordAnalyticsOptions,
   ErrorCodes,
+  InteractionData,
   InteractionType,
   Locale,
   TrackGuildType
@@ -62,7 +63,9 @@ export default class DiscordAnalytics {
    * /!\ Required to use DiscordAnalytics (except if you use the trackEvents function)
    * /!\ Must be used when the client is ready (recommended to use in ready event to prevent problems)
    */
-  public async init () {
+  public async init() {
+    const app = await this._client.rest.applications.getCurrent();
+
     fetch(`${ApiEndpoints.BASE_URL}${ApiEndpoints.EDIT_SETTINGS_URL.replace(':id', this._client.user.id)}`, {
       headers: this._headers,
       body: JSON.stringify({
@@ -70,6 +73,11 @@ export default class DiscordAnalytics {
         avatar: this._client.user.avatar,
         framework: "oceanic",
         version: npmPackageData.version,
+        team: app.team
+          ? app.team.members.map((member: any) => member.user.id)
+          : app.owner
+            ? [app.owner.id]
+            : [],
       }),
       method: "PATCH"
     }).then(async (res) => {
@@ -137,7 +145,7 @@ export default class DiscordAnalytics {
     date: new Date().toISOString().slice(0, 10),
     guilds: 0,
     users: 0,
-    interactions: [] as { name: string, number: number, type: InteractionType }[],
+    interactions: [] as InteractionData[],
     locales: [] as { locale: Locale, number: number }[],
     guildsLocales: [] as { locale: Locale, number: number }[],
     guildMembers: {
@@ -158,7 +166,7 @@ export default class DiscordAnalytics {
     }
   }
 
-  private async calculateGuildMembersRepartition (): Promise<{ little: number, medium: number, big: number, huge: number }> {
+  private async calculateGuildMembersRepartition(): Promise<{ little: number, medium: number, big: number, huge: number }> {
     const res = {
       little: 0,
       medium: 0,
@@ -184,7 +192,7 @@ export default class DiscordAnalytics {
    * /!\ You need to initialize the class first
    * @param interaction - BaseInteraction class and its extensions only
    */
-  public async trackInteractions (interaction: any) {
+  public async trackInteractions(interaction: any) {
     if (this._debug) console.log("[DISCORDANALYTICS] trackInteractions() triggered")
     if (!this._isReady) throw new Error(ErrorCodes.INSTANCE_NOT_INITIALIZED)
 
@@ -199,10 +207,12 @@ export default class DiscordAnalytics {
       ++this.statsData.locales.find((x) => x.locale === interaction.locale)!.number :
       this.statsData.locales.push({ locale: interaction.locale, number: 1 });
 
-    if (interaction.type === InteractionType.ApplicationCommand)
-      this.statsData.interactions.find((x) => x.name === interaction.data.name && x.type === interaction.type) ?
-        ++this.statsData.interactions.find((x) => x.name === interaction.data.name && x.type === interaction.type)!.number :
-        this.statsData.interactions.push({ name: interaction.data.name, number: 1, type: interaction.type });
+    if (interaction.type === InteractionType.ApplicationCommand) {
+      const commandType = interaction.data.type;
+      this.statsData.interactions.find((x) => x.name === interaction.data.name && x.type === interaction.type && x.command_type === commandType) ?
+        ++this.statsData.interactions.find((x) => x.name === interaction.data.name && x.type === interaction.type && x.command_type === commandType)!.number :
+        this.statsData.interactions.push({ name: interaction.data.name, number: 1, type: interaction.type, command_type: commandType });
+    }
 
     else if (interaction.type === InteractionType.MessageComponent || interaction.type === InteractionType.ModalSubmit)
       this.statsData.interactions.find((x) => x.name === interaction.data.customID && x.type === interaction.type) ?
@@ -237,7 +247,7 @@ export default class DiscordAnalytics {
    * @param guild - The Guild instance only
    * @param {TrackGuildType} type - "create" if the event is guildCreate and "delete" if is guildDelete
    */
-  public async trackGuilds (guild: any, type: TrackGuildType) {
+  public async trackGuilds(guild: any, type: TrackGuildType) {
     if (this._debug) console.log(`[DISCORDANALYTICS] trackGuilds(${type}) triggered`)
     if (type === "create") this.statsData.addedGuilds++
     else this.statsData.removedGuilds++
@@ -248,7 +258,7 @@ export default class DiscordAnalytics {
    * /!\ Not recommended for big bots
    * /!\ Not compatible with other functions
    */
-  public trackEvents () {
+  public trackEvents() {
     if (!this._client.ready) this._client.on("ready", async () => await this.init())
     else this.init()
     this._client.on("interactionCreate", async (interaction: any) => await this.trackInteractions(interaction))
